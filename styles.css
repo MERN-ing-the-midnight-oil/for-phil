@@ -270,6 +270,51 @@ button.card, .facility-card { display: block; width: 100%; text-align: left; }
 }
 .muted-tag { background: #ece3d5; color: var(--muted); }
 .follow-tag { background: #f3dfb3; color: #6d4b12; }
+.unlocked-tag { background: #f0d5d5; color: #6d2d2d; }
+.quick-marks { margin: 0 0 0.85rem; }
+.quick-marks .label { margin-bottom: 0.35rem; }
+.quick-marks .action-chips { margin: 0; }
+.quick-marks.compact { margin: 0.55rem 0 0; }
+.fit-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  border-radius: 999px;
+  border: 1px solid var(--rule);
+  background: var(--card);
+  padding: 0.38rem 0.8rem 0.38rem 0.45rem;
+  color: var(--muted);
+  font-size: 0.92rem;
+}
+.fit-toggle-knob {
+  position: relative;
+  width: 1.75rem;
+  height: 1.05rem;
+  flex: 0 0 auto;
+  border-radius: 999px;
+  background: #d9c8b0;
+}
+.fit-toggle-knob::after {
+  content: "";
+  position: absolute;
+  top: 0.12rem;
+  left: 0.12rem;
+  width: 0.81rem;
+  height: 0.81rem;
+  border-radius: 50%;
+  background: #fffaf1;
+  box-shadow: 0 1px 2px rgba(42, 31, 24, 0.18);
+  transition: transform 0.15s ease;
+}
+.fit-toggle.is-on {
+  background: #f0d5d5;
+  border-color: #e2b8b8;
+  color: var(--cranberry);
+}
+.fit-toggle.is-on .fit-toggle-knob { background: var(--cranberry); }
+.fit-toggle.is-on .fit-toggle-knob::after { transform: translateX(0.7rem); }
+.action-chips .fit-toggle { padding: 0.32rem 0.75rem 0.32rem 0.4rem; }
+.status-field { margin-top: 0; }
 .latest-note {
   margin: 0.2rem 0 0.8rem;
   padding: 0.65rem 0.75rem;

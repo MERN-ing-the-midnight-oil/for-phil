@@ -17,6 +17,7 @@ const STATUSES = [
 ];
 
 const SORTS = [
+  { id: 'locked', label: 'Confirmed locked facility' },
   { id: 'distance', label: 'Distance' },
   { id: 'price', label: 'Price' },
   { id: 'place', label: 'Place for Mom rating' },
@@ -131,11 +132,19 @@ function persistSorts() {
 }
 
 function compareBySort(id, a, b) {
+  if (id === 'locked') return confirmedLockedRank(a) - confirmedLockedRank(b);
   if (id === 'price') return monthlyPrice(a) - monthlyPrice(b);
   if (id === 'place') return Number(b.placeForMomTopTen === 'yes') - Number(a.placeForMomTopTen === 'yes');
   if (id === 'status') return statusRank(a.status) - statusRank(b.status);
   if (id === 'name') return a.name.localeCompare(b.name);
   return driveMinutes(a) - driveMinutes(b);
+}
+
+function confirmedLockedRank(facility) {
+  const flag = yesNo(facility && facility.confirmedLocked);
+  if (flag === 'yes') return 0;
+  if (flag === 'no') return 2;
+  return 1;
 }
 
 function clean(s) {
@@ -443,6 +452,7 @@ function normalizeFacility(raw) {
   return {
     name,
     memoryCare,
+    confirmedLocked: yesNo(raw.confirmedLocked || raw.confirmed_locked_facility || raw['Confirmed Locked Facility']),
     Address: clean(raw.Address || raw.address),
     ZIP: clean(raw.ZIP || raw.zip),
     drive: clean(raw.drive_minutes || raw.drive || raw['Driving Minutes from Parkway Village']),
@@ -499,6 +509,91 @@ function yesNo(value) {
   if (s === 'yes' || s === 'y') return 'yes';
   if (s === 'no' || s === 'n') return 'no';
   return s;
+}
+
+function lockedUnitFlag(value) {
+  const s = clean(value).toLowerCase();
+  if (s === 'yes' || s === 'y' || /^yes\b/.test(s)) return 'yes';
+  if (s === 'no' || s === 'n' || /^no\b/.test(s)) return 'no';
+  return '';
+}
+
+function readFacilityForm() {
+  const form = document.querySelector('[data-save-facility]');
+  if (!form) return {};
+  const fd = Object.fromEntries(new FormData(form).entries());
+  if (!clean(fd.note)) delete fd.note;
+  return fd;
+}
+
+const previousStatusByName = new Map();
+
+function notFitToggleHtml(f) {
+  const on = f.status === 'not-fit';
+  return `<button type="button" class="fit-toggle${on ? ' is-on' : ''}" data-mark-not-fit="${esc(f.name)}" role="switch" aria-checked="${on ? 'true' : 'false'}" ${state.saving ? 'disabled' : ''}>
+    <span class="fit-toggle-knob" aria-hidden="true"></span>
+    Not a good fit
+  </button>`;
+}
+
+function quickMarksHtml(f, compact) {
+  const notLocked = lockedUnitFlag(f.lockedUnit) === 'no';
+  return `
+    <div class="quick-marks${compact ? ' compact' : ''}">
+      ${compact ? '' : '<p class="label">Quick marks</p>'}
+      <div class="action-chips">
+        ${compact ? '' : notFitToggleHtml(f)}
+        <button type="button" class="${notLocked ? 'active' : ''}" data-mark-not-locked="${esc(f.name)}" aria-pressed="${notLocked ? 'true' : 'false'}" ${state.saving ? 'disabled' : ''}>No locked unit</button>
+      </div>
+    </div>
+  `;
+}
+
+async function quickSaveFacility(name, patch, opts = {}) {
+  const f = state.facilities.find((item) => item.name === name);
+  if (!f) return false;
+  const fromForm = state.facilityName === name ? readFacilityForm() : {};
+  const userNote = clean(fromForm.note);
+  const payload = { name, ...fromForm, ...patch };
+  if (userNote) {
+    payload.note = userNote;
+    payload.latestNote = userNote;
+    payload.actionLabel = patch.actionLabel || 'Logged a call';
+  }
+  const close = Boolean(opts.closeDetail && state.facilityName === name);
+  const ok = await persist(userNote ? 'note' : 'save', payload, () => {
+    if (payload.status != null) f.status = payload.status;
+    if (payload.lockedUnit != null) f.lockedUnit = payload.lockedUnit;
+    if (payload.notFitReason != null) f.notFitReason = payload.notFitReason;
+    if (userNote) f.latestNote = userNote;
+  });
+  if (ok && close) {
+    setOpenFacility('');
+    render();
+  }
+  return ok;
+}
+
+async function toggleNotFit(name) {
+  const f = state.facilities.find((item) => item.name === name);
+  if (!f) return;
+  const onDetail = state.facilityName === name;
+  if (f.status === 'not-fit') {
+    const restore = previousStatusByName.get(name);
+    const status = restore && restore !== 'not-fit' ? restore : 'not-started';
+    previousStatusByName.delete(name);
+    await quickSaveFacility(name, { status, actionLabel: 'Back in the running' });
+    return;
+  }
+  previousStatusByName.set(name, f.status || 'not-started');
+  await quickSaveFacility(name, { status: 'not-fit', actionLabel: 'Not a good fit' }, { closeDetail: onDetail });
+}
+
+async function markNotLocked(name) {
+  const fromForm = state.facilityName === name ? readFacilityForm() : {};
+  const patch = { lockedUnit: 'No', actionLabel: 'No locked unit' };
+  if (!clean(fromForm.note)) patch.note = 'Not a locked / secure memory care unit.';
+  await quickSaveFacility(name, patch);
 }
 
 function applyRemoteState(data) {
@@ -802,6 +897,9 @@ function listedFacilities() {
       return true;
     })
     .sort((a, b) => {
+      const aOut = a.status === 'not-fit' ? 1 : 0;
+      const bOut = b.status === 'not-fit' ? 1 : 0;
+      if (aOut !== bOut) return aOut - bOut;
       for (let i = 0; i < state.sorts.length; i++) {
         const d = compareBySort(state.sorts[i], a, b);
         if (d) return d;
@@ -935,6 +1033,13 @@ function renderList(list) {
 function facilityCard(f) {
   const drive = f.drive || 'Drive time unknown';
   const phone = telHref(f.Phone);
+  const locked = yesNo(f.confirmedLocked);
+  const notLockedCall = lockedUnitFlag(f.lockedUnit) === 'no';
+  const tags = [
+    locked === 'yes' ? '<span class="tag">Confirmed locked</span>' : '',
+    locked === 'no' ? '<span class="tag unlocked-tag">Not a locked facility</span>' : '',
+    locked !== 'no' && notLockedCall ? '<span class="tag unlocked-tag">No locked unit</span>' : ''
+  ].filter(Boolean);
   return el(`
     <article class="card facility-card" data-open-facility="${esc(f.name)}">
       <div class="card-head">
@@ -944,11 +1049,14 @@ function facilityCard(f) {
         </div>
         <span class="status ${esc(f.status)}">${esc(statusLabel(f.status))}</span>
       </div>
+      ${tags.length ? `<div class="card-tags">${tags.join('')}</div>` : ''}
       <div class="card-actions">
         ${phone
           ? `<a class="call card-call" href="${phone}" data-call-facility="${esc(f.name)}">${esc(f.Phone)}</a>`
           : (f.Phone ? `<span class="tiny">${esc(f.Phone)}</span>` : '<span class="tiny">No phone listed</span>')}
+        ${notFitToggleHtml(f)}
       </div>
+      ${quickMarksHtml(f, true)}
     </article>
   `);
 }
@@ -981,6 +1089,10 @@ function renderDetail(f) {
       <div class="card-tags">
         ${f.placeForMomTopTen === 'yes' ? '<span class="apfm-badge">A Place for Mom top 10</span>' : ''}
         ${f.memoryCare === 'yes' ? '<span class="tag">Memory care</span>' : '<span class="tag muted-tag">Not memory care</span>'}
+        ${f.confirmedLocked === 'yes' ? '<span class="tag">Confirmed locked</span>' : ''}
+        ${f.confirmedLocked === 'no' ? '<span class="tag unlocked-tag">Not a locked facility</span>' : ''}
+        ${lockedUnitFlag(f.lockedUnit) === 'yes' ? '<span class="tag">Locked unit (from call)</span>' : ''}
+        ${lockedUnitFlag(f.lockedUnit) === 'no' ? '<span class="tag unlocked-tag">No locked unit (from call)</span>' : ''}
         ${isFollowup(f) ? '<span class="tag follow-tag">Follow-up due</span>' : ''}
       </div>
       ${f.lastAt ? `<p class="tiny">Last update ${esc(f.lastAt)}</p>` : ''}
@@ -998,6 +1110,7 @@ function renderDetail(f) {
         <div><dt>Capacity</dt><dd>${esc(f.Capacity) || '—'} · ${esc(f['Unit Type'])}</dd></div>
         <div><dt>Monthly</dt><dd>${esc(f['Monthly Cost']) || 'Call for rates'}</dd></div>
         <div><dt>Memory care</dt><dd>${f.memoryCare === 'yes' ? 'Yes' : 'No'}</dd></div>
+        <div><dt>Confirmed locked facility</dt><dd>${f.confirmedLocked === 'yes' ? 'Yes — dedicated locked / secure memory care unit' : f.confirmedLocked === 'no' ? 'No — not confirmed as a locked facility' : '—'}</dd></div>
         <div><dt>Services</dt><dd>${esc(f['Key Services'])}</dd></div>
         <div><dt>Place for Mom</dt><dd>${f.placeForMomTopTen === 'yes' ? 'Yes — on their Bellingham top 10' : '—'}</dd></div>
       </dl>
@@ -1006,6 +1119,11 @@ function renderDetail(f) {
     <form id="facility-form" class="card action-card" data-save-facility>
       <h3>While you're on the phone</h3>
       <p class="action-lede">Ask these first and jot the answers. Then set the next follow-up — tours, callbacks, waitlist checks, assessments, and deadlines can go to Google Calendar.</p>
+      ${quickMarksHtml(f)}
+      <label class="field status-field">
+        <span>Pipeline status</span>
+        <select name="status">${STATUSES.map((s) => `<option value="${s.id}" ${f.status === s.id ? 'selected' : ''}>${s.label}</option>`).join('')}</select>
+      </label>
       <ol class="call-script">
         ${CALL_PROMPTS.map((item) => `
           <li>
@@ -1060,10 +1178,6 @@ function renderDetail(f) {
 
     <div class="card">
       <label class="field">
-        <span>Pipeline status</span>
-        <select name="status" form="facility-form">${STATUSES.map((s) => `<option value="${s.id}" ${f.status === s.id ? 'selected' : ''}>${s.label}</option>`).join('')}</select>
-      </label>
-      <label class="field">
         <span>Admissions contact</span>
         <input name="admissionsContact" type="text" form="facility-form" value="${esc(f.admissionsContact)}" placeholder="Name, extension, email">
       </label>
@@ -1077,6 +1191,9 @@ function renderDetail(f) {
       ${QUESTIONS.map(([key, label]) => `
         <label class="field"><span>${esc(label)}</span><input name="${key}" type="text" form="facility-form" value="${esc(f[key])}"></label>
       `).join('')}
+      <div class="row-actions">
+        <button class="primary" type="submit" form="facility-form" ${state.saving ? 'disabled' : ''}>${state.saving ? 'Saving…' : 'Save'}</button>
+      </div>
     </div>
   `));
   return wrap;
@@ -1457,6 +1574,30 @@ function bind(root) {
     e.stopPropagation();
   }));
   bindActionStrip(root);
+  const statusSelect = root.querySelector('[data-save-facility] [name="status"]');
+  if (statusSelect) {
+    statusSelect.addEventListener('change', async () => {
+      const f = currentFacility();
+      if (!f) return;
+      await quickSaveFacility(f.name, { status: statusSelect.value }, {
+        closeDetail: statusSelect.value === 'not-fit'
+      });
+    });
+  }
+  root.querySelectorAll('[data-mark-not-fit]').forEach((btn) => {
+    btn.addEventListener('click', async (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      await toggleNotFit(btn.dataset.markNotFit);
+    });
+  });
+  root.querySelectorAll('[data-mark-not-locked]').forEach((btn) => {
+    btn.addEventListener('click', async (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      await markNotLocked(btn.dataset.markNotLocked);
+    });
+  });
   const back = root.querySelector('[data-close-detail]');
   if (back) back.addEventListener('click', () => {
     setOpenFacility('');
@@ -1548,7 +1689,6 @@ function bind(root) {
     if (!fd.actionKind && (fd.nextDate || fd.nextStep)) fd.actionKind = inferActionKind({ ...f, ...fd }) || 'callback';
     if (!clean(fd.nextStep) && fd.actionKind) fd.nextStep = ACTION_DEFAULT_NOTE[fd.actionKind] || '';
     const meta = actionKindMeta(fd.actionKind);
-    if (meta && meta.status) fd.status = meta.status;
     if (fd.actionKind === 'waitlist-check' && !clean(fd.waitlistDate)) fd.waitlistDate = toIsoDate(new Date());
     if (meta && !meta.timed) fd.actionTime = '';
     if (openCal && !parseDate(fd.nextDate)) {
@@ -1568,7 +1708,11 @@ function bind(root) {
       payload.latestNote = note;
       payload.actionLabel = 'Logged a call';
     }
-    await persist(note ? 'note' : 'save', payload, () => {});
+    const ok = await persist(note ? 'note' : 'save', payload, () => {});
+    if (ok && fd.status === 'not-fit') {
+      setOpenFacility('');
+      render();
+    }
   });
 }
 

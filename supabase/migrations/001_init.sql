@@ -17,6 +17,7 @@ create table if not exists public.facilities (
   id uuid primary key default gen_random_uuid(),
   name text not null unique,
   memory_care text not null default '',
+  confirmed_locked_facility text not null default '',
   address text not null default '',
   zip text not null default '',
   drive_minutes text not null default '',

@@ -92,6 +92,7 @@ function rowToFacility(row) {
   return {
     name,
     memory_care: memoryCare,
+    confirmed_locked_facility: yesNo(row['Confirmed Locked Facility'] || row.confirmed_locked_facility),
     address: clean(row.Address || row.address),
     zip: clean(row.ZIP || row.zip),
     drive_minutes: clean(row['Driving Minutes from Parkway Village'] || row.drive || row.drive_minutes),
