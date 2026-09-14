@@ -1,0 +1,17 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <base target="_top">
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>For Phil</title>
+  <style><?!= include('styles'); ?></style>
+</head>
+<body>
+  <div id="app"></div>
+  <script>
+    window.FOR_PHIL_SCRIPT_URL = '<?!= ScriptApp.getService().getUrl() ?>';
+  </script>
+  <script><?!= include('app'); ?></script>
+</body>
+</html>
